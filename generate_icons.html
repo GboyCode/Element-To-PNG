@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generate PNG Icons</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .icon-container { display: flex; gap: 20px; align-items: center; margin-bottom: 20px; }
+        .icon-item { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        .download-btn { padding: 10px 20px; background: #1677ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>图标生成工具</h1>
+    <p>该页面会将 SVG 渲染为不同尺寸的 PNG，请点击下方按钮下载。</p>
+    
+    <div class="icon-container">
+        <div class="icon-item">
+            <canvas id="c16" width="16" height="16"></canvas>
+            <span>16px</span>
+        </div>
+        <div class="icon-item">
+            <canvas id="c32" width="32" height="32"></canvas>
+            <span>32px</span>
+        </div>
+        <div class="icon-item">
+            <canvas id="c48" width="48" height="48"></canvas>
+            <span>48px</span>
+        </div>
+        <div class="icon-item">
+            <canvas id="c128" width="128" height="128"></canvas>
+            <span>128px</span>
+        </div>
+    </div>
+
+    <button class="download-btn" onclick="downloadAll()">下载所有图标</button>
+
+    <script>
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+    <rect x="0" y="0" width="128" height="128" rx="20" fill="#1677ff" />
+    <g transform="translate(24, 24)">
+        <rect x="0" y="0" width="80" height="80" fill="none" stroke="white" stroke-width="6" stroke-dasharray="10 6" rx="8" />
+        <path d="M20 50 L35 30 L50 50 L20 50 Z" fill="white" />
+        <path d="M40 50 L50 35 L70 55 L40 50 Z" fill="white" />
+        <circle cx="55" cy="25" r="5" fill="white" />
+    </g>
+</svg>`;
+
+        const sizes = [16, 32, 48, 128];
+        const img = new Image();
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+
+        img.onload = () => {
+            sizes.forEach(size => {
+                const canvas = document.getElementById('c' + size);
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, size, size);
+            });
+        };
+
+        function downloadAll() {
+            sizes.forEach(size => {
+                const canvas = document.getElementById('c' + size);
+                const link = document.createElement('a');
+                link.download = `icon${size}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            });
+        }
+    </script>
+</body>
+</html>
