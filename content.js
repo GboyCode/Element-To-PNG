@@ -15,6 +15,7 @@ const SELECTOR_STATE = {
     isPickingDone: false,
     isDragging: false,
     selectedElements: new Set(),
+    dragMode: "add", // "add" 表示当前拖拽是在增选，"remove" 表示当前拖拽是在减选
     originalUserSelect: undefined
 };
 
@@ -49,6 +50,7 @@ async function startElementPicking() {
     SELECTOR_STATE.enabled = true;
     SELECTOR_STATE.isPickingDone = false;
     SELECTOR_STATE.isDragging = false;
+    SELECTOR_STATE.dragMode = "add";
     SELECTOR_STATE.selectedElements.clear();
 
     // 临时禁用页面的文本选择，避免拖拽时选中文字
@@ -77,7 +79,7 @@ function installOverlay() {
     mask.style.transition = "all 80ms linear";
 
     const tip = document.createElement("div");
-    tip.textContent = "选择模式：单击 或 按住左键拖拽连选相邻元素，松开截图，按 Esc 取消";
+    tip.textContent = "选择模式：单击 或 拖拽连选相邻元素，对已选元素拖拽可取消选择，松开截图，按 Esc 取消";
     tip.style.position = "fixed";
     tip.style.left = "16px";
     tip.style.bottom = "16px";
@@ -114,8 +116,12 @@ function bindPickerEvents() {
         if (!target) return;
 
         if (SELECTOR_STATE.isDragging) {
-            // 拖拽连选模式：把经过的元素全部加入集合，并渲染包含它们的联合包围盒
-            SELECTOR_STATE.selectedElements.add(target);
+            // 拖拽连选/取消连选模式
+            if (SELECTOR_STATE.dragMode === "add") {
+                SELECTOR_STATE.selectedElements.add(target);
+            } else if (SELECTOR_STATE.dragMode === "remove") {
+                SELECTOR_STATE.selectedElements.delete(target);
+            }
             const rect = getCombinedRect(SELECTOR_STATE.selectedElements);
             renderMaskByRect(rect);
         } else {
@@ -135,10 +141,19 @@ function bindPickerEvents() {
         const target = getValidTarget(event.clientX, event.clientY);
         if (target) {
             SELECTOR_STATE.isDragging = true;
-            SELECTOR_STATE.selectedElements.clear();
-            SELECTOR_STATE.selectedElements.add(target);
+            // 判断当前点击的元素是否已经被选中
+            if (SELECTOR_STATE.selectedElements.has(target)) {
+                // 如果已经选中，则进入减选模式，移除当前元素
+                SELECTOR_STATE.dragMode = "remove";
+                SELECTOR_STATE.selectedElements.delete(target);
+                updateTip("正在取消选择，松开确认截图...");
+            } else {
+                // 如果未选中，则进入增选模式，添加当前元素
+                SELECTOR_STATE.dragMode = "add";
+                SELECTOR_STATE.selectedElements.add(target);
+                updateTip("正在连选，松开确认截图...");
+            }
             renderMaskByRect(getCombinedRect(SELECTOR_STATE.selectedElements));
-            updateTip("正在连选，松开左键确认截图...");
         }
     };
 
@@ -150,13 +165,17 @@ function bindPickerEvents() {
         event.stopPropagation();
 
         SELECTOR_STATE.isDragging = false;
-        SELECTOR_STATE.isPickingDone = true;
+        SELECTOR_STATE.dragMode = "add";
 
         const finalRect = getCombinedRect(SELECTOR_STATE.selectedElements);
         if (!finalRect) {
-            stopElementPicking();
+            // 如果最后没有选中的区域（比如减选清空了所有），则退回悬浮预览状态
+            SELECTOR_STATE.isPickingDone = false;
+            updateTip("未选中任何区域，请重新选择");
             return;
         }
+
+        SELECTOR_STATE.isPickingDone = true;
 
         try {
             updateTip("正在截图并写入剪贴板...");
