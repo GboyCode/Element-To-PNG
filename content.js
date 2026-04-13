@@ -1,7 +1,7 @@
 /**
  * 内容脚本职责：
  * 1) 接收 popup 发起的“开始选择元素”指令
- * 2) 在页面内高亮 hover 元素，点击后确定目标元素
+ * 2) 在页面内高亮 hover 元素，支持单击单选或按住拖拽连选相邻元素
  * 3) 请求后台截图 + 裁剪
  * 4) 将 PNG 写入系统剪贴板
  */
@@ -12,14 +12,17 @@ const SELECTOR_STATE = {
     maskEl: null,
     tipEl: null,
     cleanupFns: [],
-    isPickingDone: false
+    isPickingDone: false,
+    isDragging: false,
+    selectedElements: new Set(),
+    originalUserSelect: undefined
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "START_PICK_ELEMENT") {
         startElementPicking()
             .then(() => {
-                sendResponse({ ok: true, message: "请在页面中点击一个元素以复制 PNG" });
+                sendResponse({ ok: true, message: "请在页面中单击或拖拽连选元素" });
             })
             .catch((error) => {
                 sendResponse({ ok: false, message: error?.message || "启动选择器失败" });
@@ -45,6 +48,13 @@ async function startElementPicking() {
 
     SELECTOR_STATE.enabled = true;
     SELECTOR_STATE.isPickingDone = false;
+    SELECTOR_STATE.isDragging = false;
+    SELECTOR_STATE.selectedElements.clear();
+
+    // 临时禁用页面的文本选择，避免拖拽时选中文字
+    SELECTOR_STATE.originalUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
     installOverlay();
     bindPickerEvents();
 }
@@ -67,7 +77,7 @@ function installOverlay() {
     mask.style.transition = "all 80ms linear";
 
     const tip = document.createElement("div");
-    tip.textContent = "选择模式：移动鼠标预览，单击复制为 PNG，按 Esc 取消";
+    tip.textContent = "选择模式：单击 或 按住左键拖拽连选相邻元素，松开截图，按 Esc 取消";
     tip.style.position = "fixed";
     tip.style.left = "16px";
     tip.style.bottom = "16px";
@@ -96,36 +106,61 @@ function installOverlay() {
  */
 function bindPickerEvents() {
     const onMouseMove = (event) => {
-        if (!SELECTOR_STATE.enabled) {
+        if (!SELECTOR_STATE.enabled || SELECTOR_STATE.isPickingDone) {
             return;
         }
 
         const target = getValidTarget(event.clientX, event.clientY);
-        SELECTOR_STATE.hoverEl = target;
-        renderMaskByElement(target);
+        if (!target) return;
+
+        if (SELECTOR_STATE.isDragging) {
+            // 拖拽连选模式：把经过的元素全部加入集合，并渲染包含它们的联合包围盒
+            SELECTOR_STATE.selectedElements.add(target);
+            const rect = getCombinedRect(SELECTOR_STATE.selectedElements);
+            renderMaskByRect(rect);
+        } else {
+            // 悬浮预览模式
+            SELECTOR_STATE.hoverEl = target;
+            renderMaskByRect(target.getBoundingClientRect());
+        }
     };
 
-    const onClick = async (event) => {
-        if (!SELECTOR_STATE.enabled) {
-            return;
-        }
+    const onMouseDown = (event) => {
+        if (!SELECTOR_STATE.enabled || SELECTOR_STATE.isPickingDone) return;
+        if (event.button !== 0) return; // 仅响应左键
 
-        // 阻止页面原本 click 行为，避免用户误触按钮或跳转
         event.preventDefault();
         event.stopPropagation();
 
-        // 立即移除鼠标移动事件，锁定选择框位置，避免交互干扰
-        document.removeEventListener("mousemove", onMouseMove, true);
+        const target = getValidTarget(event.clientX, event.clientY);
+        if (target) {
+            SELECTOR_STATE.isDragging = true;
+            SELECTOR_STATE.selectedElements.clear();
+            SELECTOR_STATE.selectedElements.add(target);
+            renderMaskByRect(getCombinedRect(SELECTOR_STATE.selectedElements));
+            updateTip("正在连选，松开左键确认截图...");
+        }
+    };
+
+    const onMouseUp = async (event) => {
+        if (!SELECTOR_STATE.enabled || SELECTOR_STATE.isPickingDone) return;
+        if (event.button !== 0 || !SELECTOR_STATE.isDragging) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        SELECTOR_STATE.isDragging = false;
         SELECTOR_STATE.isPickingDone = true;
 
-        const target = getValidTarget(event.clientX, event.clientY);
-        if (!target) {
+        const finalRect = getCombinedRect(SELECTOR_STATE.selectedElements);
+        if (!finalRect) {
+            stopElementPicking();
             return;
         }
 
         try {
             updateTip("正在截图并写入剪贴板...");
-            await copyElementAsPng(target);
+            await copyRectAsPng(finalRect);
             updateTip("复制成功：PNG 已写入剪贴板");
         } catch (error) {
             const msg = error?.message || "复制失败";
@@ -134,6 +169,14 @@ function bindPickerEvents() {
         } finally {
             // 给用户 600ms 反馈时间，再退出选择模式
             setTimeout(() => stopElementPicking(), 600);
+        }
+    };
+
+    const onClick = (event) => {
+        // 拦截点击事件，防止拖拽松开后触发页面原生 click 导致跳转或误操作
+        if (SELECTOR_STATE.enabled || SELECTOR_STATE.isPickingDone) {
+            event.preventDefault();
+            event.stopPropagation();
         }
     };
 
@@ -148,10 +191,14 @@ function bindPickerEvents() {
     };
 
     document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("mousedown", onMouseDown, true);
+    document.addEventListener("mouseup", onMouseUp, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKeyDown, true);
 
     SELECTOR_STATE.cleanupFns.push(() => document.removeEventListener("mousemove", onMouseMove, true));
+    SELECTOR_STATE.cleanupFns.push(() => document.removeEventListener("mousedown", onMouseDown, true));
+    SELECTOR_STATE.cleanupFns.push(() => document.removeEventListener("mouseup", onMouseUp, true));
     SELECTOR_STATE.cleanupFns.push(() => document.removeEventListener("click", onClick, true));
     SELECTOR_STATE.cleanupFns.push(() => document.removeEventListener("keydown", onKeyDown, true));
 }
@@ -162,6 +209,14 @@ function bindPickerEvents() {
 function stopElementPicking() {
     SELECTOR_STATE.enabled = false;
     SELECTOR_STATE.hoverEl = null;
+    SELECTOR_STATE.isDragging = false;
+    SELECTOR_STATE.selectedElements.clear();
+
+    // 恢复页面的文本选择状态
+    if (SELECTOR_STATE.originalUserSelect !== undefined) {
+        document.body.style.userSelect = SELECTOR_STATE.originalUserSelect;
+        SELECTOR_STATE.originalUserSelect = undefined;
+    }
 
     for (const cleanup of SELECTOR_STATE.cleanupFns) {
         cleanup();
@@ -201,7 +256,9 @@ function getValidTarget(clientX, clientY) {
     const element = document.elementFromPoint(clientX, clientY);
 
     if (SELECTOR_STATE.maskEl) {
-        SELECTOR_STATE.maskEl.style.display = oldMaskDisplay || "";
+        if (!SELECTOR_STATE.isPickingDone) {
+            SELECTOR_STATE.maskEl.style.display = oldMaskDisplay || "";
+        }
     }
     if (SELECTOR_STATE.tipEl) {
         SELECTOR_STATE.tipEl.style.display = oldTipDisplay || "";
@@ -214,15 +271,43 @@ function getValidTarget(clientX, clientY) {
 }
 
 /**
- * 根据目标元素渲染高亮框
- * @param {Element|null} el
+ * 计算多个元素的联合包围盒
+ * @param {Set<Element>} elementsSet
+ * @returns {{left: number, top: number, width: number, height: number}|null}
  */
-function renderMaskByElement(el) {
-    if (!el || !SELECTOR_STATE.maskEl) {
-        return;
+function getCombinedRect(elementsSet) {
+    if (!elementsSet || elementsSet.size === 0) return null;
+
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    for (const el of elementsSet) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        minX = Math.min(minX, rect.left);
+        minY = Math.min(minY, rect.top);
+        maxX = Math.max(maxX, rect.right);
+        maxY = Math.max(maxY, rect.bottom);
     }
 
-    const rect = el.getBoundingClientRect();
+    if (minX === Infinity) return null;
+
+    return {
+        left: minX,
+        top: minY,
+        width: maxX - minX,
+        height: maxY - minY
+    };
+}
+
+/**
+ * 根据矩形区域渲染高亮框
+ * @param {{left: number, top: number, width: number, height: number}|null} rect
+ */
+function renderMaskByRect(rect) {
+    if (!rect || !SELECTOR_STATE.maskEl) {
+        return;
+    }
     SELECTOR_STATE.maskEl.style.left = `${rect.left}px`;
     SELECTOR_STATE.maskEl.style.top = `${rect.top}px`;
     SELECTOR_STATE.maskEl.style.width = `${rect.width}px`;
@@ -240,15 +325,13 @@ function updateTip(text) {
 }
 
 /**
- * 复制目标元素为 PNG
- * @param {Element} target
+ * 复制目标区域为 PNG
+ * @param {{left: number, top: number, width: number, height: number}} rect
  */
-async function copyElementAsPng(target) {
-    const rect = target.getBoundingClientRect();
-
+async function copyRectAsPng(rect) {
     // 限制必须在可视区域内且存在面积，避免截图裁剪失败
     if (rect.width < 1 || rect.height < 1) {
-        throw new Error("目标元素尺寸过小，无法复制");
+        throw new Error("目标区域尺寸过小，无法复制");
     }
 
     const payload = {
