@@ -59,8 +59,8 @@ function installOverlay() {
     mask.style.top = "0";
     mask.style.width = "0";
     mask.style.height = "0";
-    mask.style.border = "2px solid #1677ff";
-    mask.style.background = "rgba(22, 119, 255, 0.12)";
+    mask.style.border = "2px solid #5a5a4a"; /* olive-600 */
+    mask.style.background = "rgba(90, 90, 74, 0.12)"; /* olive-600 with 12% opacity */
     mask.style.zIndex = "2147483646";
     mask.style.pointerEvents = "none";
     mask.style.boxSizing = "border-box";
@@ -69,17 +69,19 @@ function installOverlay() {
     const tip = document.createElement("div");
     tip.textContent = "选择模式：移动鼠标预览，单击复制为 PNG，按 Esc 取消";
     tip.style.position = "fixed";
-    tip.style.left = "12px";
-    tip.style.bottom = "12px";
-    tip.style.padding = "8px 10px";
-    tip.style.background = "rgba(0, 0, 0, 0.75)";
-    tip.style.color = "#fff";
-    tip.style.fontSize = "12px";
-    tip.style.lineHeight = "1.4";
-    tip.style.borderRadius = "6px";
+    tip.style.left = "16px";
+    tip.style.bottom = "16px";
+    tip.style.padding = "8px 12px";
+    tip.style.background = "rgba(11, 11, 9, 0.85)"; /* olive-950 with 85% opacity */
+    tip.style.color = "#f3f3f0"; /* olive-100 */
+    tip.style.fontSize = "13px";
+    tip.style.lineHeight = "1.5";
+    tip.style.borderRadius = "8px";
     tip.style.zIndex = "2147483647";
     tip.style.pointerEvents = "none";
-    tip.style.fontFamily = "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+    tip.style.fontFamily = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+    tip.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.15)";
+    tip.style.backdropFilter = "blur(4px)";
 
     document.documentElement.style.cursor = "crosshair";
     document.body.appendChild(mask);
